@@ -9,6 +9,7 @@
 #include <numbers>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -58,6 +59,31 @@ std::string sha256_file(const std::filesystem::path& path) {
 }
 } // namespace
 
+std::expected<PolicyProfile, std::string> parse_policy_profile(std::string_view name) {
+    if (name == "v5_full")
+        return PolicyProfile::kV5Full;
+    if (name == "flat_12486")
+        return PolicyProfile::kFlat12486;
+    return std::unexpected{std::string{"Unknown RL policy_profile: "} + std::string{name}};
+}
+
+std::expected<void, std::string> validate_model_identity(
+    std::string_view expected_sha, std::string_view actual_sha, PolicyProfile profile) {
+    const auto is_lower_hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    };
+    if (expected_sha.size() != 64 || !std::ranges::all_of(expected_sha, is_lower_hex))
+        return std::unexpected{std::string{"rl_model_sha256 must be 64 lowercase hex digits"}};
+    if (expected_sha != actual_sha)
+        return std::unexpected{
+            std::string{"ONNX SHA-256 does not match the selected model bundle"}};
+    const bool flat_model = expected_sha == kFlat12486Sha256;
+    const bool flat_profile = profile == PolicyProfile::kFlat12486;
+    if (flat_model != flat_profile)
+        return std::unexpected{std::string{"policy_profile does not match rl_model_sha256"}};
+    return {};
+}
+
 bool flat_candidate_accepts(
     bool jump, double height, rmcs_msgs::ChassisMode mode,
     const rmcs_description::BaseLink::DirectionVector& command) {
@@ -99,16 +125,17 @@ RlController::RlController()
     register_input("/predefined/update_count", update_count_);
     register_input("/predefined/update_rate", update_rate_);
     register_input("/predefined/timestamp", timestamp_);
-    register_output("/wheel_leg/rl/state", state_output_, static_cast<int>(State::kInit));
+    register_output("/wheel_leg/rl/state", state_output_, std::to_underlying(State::kInit));
 
     calibration_ready_ = get_parameter_or("calibration_ready", false);
     soft_limits_ready_ = get_parameter_or("soft_limits_ready", false);
     imu_alignment_ready_ = get_parameter_or("imu_alignment_ready", false);
     auto_enter_rl_ = get_parameter_or("auto_enter_rl", false);
-    const auto profile = get_parameter_or<std::string>("policy_profile", "v5_full");
-    if (profile != "v5_full" && profile != "flat_12486")
-        throw std::runtime_error("Unknown RL policy_profile");
-    flat_candidate_ = profile == "flat_12486";
+    const auto profile =
+        parse_policy_profile(get_parameter_or<std::string>("policy_profile", "v5_full"));
+    if (!profile)
+        throw std::runtime_error(profile.error());
+    policy_profile_ = *profile;
     prepare_kp_ = get_parameter_or("prepare_kp", 80.0);
     prepare_kd_ = get_parameter_or("prepare_kd", 2.0);
     prepare_max_velocity_ = get_parameter_or("prepare_max_velocity", 1.0);
@@ -121,7 +148,7 @@ RlController::RlController()
     if (inference_frequency_ != 50.0 || prepare_kp_ <= 0 || prepare_kd_ < 0
         || prepare_max_velocity_ <= 0 || prepare_reach_threshold_ <= 0 || hinge_margin_ < 0
         || height_transition_seconds_ <= 0 || wheel_radius_ <= 0 || wheel_track_ <= 0)
-        throw std::runtime_error("Invalid V5.4 policy / PREPARE frequency or gains");
+        throw std::runtime_error("Invalid policy frequency, PREPARE gains, or robot geometry");
 
     const auto matrix = parameter_vector(*this, "leg_motor_to_model", 16);
     const auto offsets = parameter_vector(*this, "leg_model_offsets", 4);
@@ -187,12 +214,10 @@ RlController::RlController()
             path = std::filesystem::path{ament_index_cpp::get_package_share_directory("rmcs_rl")}
                  / path;
         const auto expected_sha = get_parameter_or<std::string>("rl_model_sha256", "");
-        if (expected_sha.size() != 64 || sha256_file(path) != expected_sha)
-            throw std::runtime_error("ONNX SHA-256 does not match the selected model bundle");
-        constexpr auto kFlatCandidateSha =
-            "ae58b862be5547195d8c4b3e71aa9be37b147792ebc903c68f032f341d92be6d";
-        if ((expected_sha == kFlatCandidateSha) != flat_candidate_)
-            throw std::runtime_error("v5_flat_12486 requires the flat_12486 capability profile");
+        const auto identity =
+            validate_model_identity(expected_sha, sha256_file(path), policy_profile_);
+        if (!identity)
+            throw std::runtime_error(identity.error());
         policy_ = std::make_unique<OnnxPolicy>(path.string());
         policy_ready_ = true;
     }
@@ -237,7 +262,7 @@ void RlController::enter_(State next) {
 }
 
 void RlController::publish_state_() {
-    const int state = static_cast<int>(state_);
+    const int state = std::to_underlying(state_);
     *state_output_ = state;
     if (last_published_state_ != state) {
         std_msgs::msg::Int32 msg;
@@ -293,13 +318,13 @@ void RlController::update() {
         return;
     }
     const bool unsupported_flat_command =
-        flat_candidate_
+        policy_profile_ == PolicyProfile::kFlat12486
         && !flat_candidate_accepts(
             *jump_command_, *height_command_, *chassis_mode_, *velocity_command_);
     if (unsupported_flat_command)
         RCLCPP_WARN_THROTTLE(
             get_logger(), *get_clock(), 1000,
-            "flat_12486 request exceeds its flat/turn capability profile");
+            "Requested motion exceeds the active policy capability profile");
     if ((requested != 2 && requested != 3 && !automatic) || unsupported_flat_command
         || fault_latched_ || !policy_ready_ || !calibration_ready_ || !soft_limits_ready_
         || !imu_alignment_ready_ || !read_model_state_()) {

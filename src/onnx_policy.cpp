@@ -32,22 +32,23 @@ struct OnnxPolicy::Impl {
         session = Ort::Session(env, path.c_str(), options);
 
         if (session.GetInputCount() != 1 || session.GetOutputCount() != 1)
-            throw std::runtime_error("V5.4 requires exactly one ONNX input and output");
+            throw std::runtime_error("Policy ONNX must have exactly one input and one output");
         Ort::AllocatorWithDefaultOptions allocator;
         input_name = session.GetInputNameAllocated(0, allocator).get();
         output_name = session.GetOutputNameAllocated(0, allocator).get();
         if (input_name != "obs" || output_name != "actions")
-            throw std::runtime_error("V5.4 ONNX IO names must be obs -> actions");
+            throw std::runtime_error("Policy ONNX input/output names must be obs and actions");
 
         const auto check = [this](bool is_input, int64_t width) {
             const auto info = is_input ? session.GetInputTypeInfo(0) : session.GetOutputTypeInfo(0);
             if (info.GetONNXType() != ONNX_TYPE_TENSOR)
-                throw std::runtime_error("V5.4 ONNX IO must be tensors");
+                throw std::runtime_error("Policy ONNX input/output must be tensors");
             const auto tensor = info.GetTensorTypeAndShapeInfo();
             const auto dims = tensor.GetShape();
             if (tensor.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || dims.size() != 2
                 || (dims[0] != -1 && dims[0] != 1) || dims[1] != width)
-                throw std::runtime_error("V5.4 ONNX must have float32 [batch,35] -> [batch,6]");
+                throw std::runtime_error(
+                    "ONNX tensor type or shape does not match the policy contract");
         };
         check(true, 35);
         check(false, 6);

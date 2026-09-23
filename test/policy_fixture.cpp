@@ -37,3 +37,23 @@ TEST(V5Flat12486, RejectsUnverifiedContexts) {
     EXPECT_TRUE(flat_candidate_accepts(
         false, 0.305, ChassisMode::SPIN_FAST, BaseLink::DirectionVector{0.0, 0.0, 1.0}));
 }
+
+TEST(V5Flat12486, ModelIdentityAndProfile) {
+    using rmcs::rl::kFlat12486Sha256;
+    using rmcs::rl::parse_policy_profile;
+    using rmcs::rl::PolicyProfile;
+    using rmcs::rl::validate_model_identity;
+
+    const auto profile = parse_policy_profile("flat_12486");
+    ASSERT_TRUE(profile.has_value());
+    EXPECT_EQ(*profile, PolicyProfile::kFlat12486);
+    EXPECT_FALSE(parse_policy_profile("unknown"));
+    EXPECT_TRUE(validate_model_identity(kFlat12486Sha256, kFlat12486Sha256, *profile));
+    EXPECT_FALSE(validate_model_identity(kFlat12486Sha256, "bad", *profile));
+    EXPECT_FALSE(validate_model_identity("bad", "bad", *profile));
+    EXPECT_FALSE(
+        validate_model_identity(kFlat12486Sha256, kFlat12486Sha256, PolicyProfile::kV5Full));
+    EXPECT_FALSE(validate_model_identity(std::string(64, '0'), std::string(64, '0'), *profile));
+    EXPECT_TRUE(validate_model_identity(
+        std::string(64, '0'), std::string(64, '0'), PolicyProfile::kV5Full));
+}

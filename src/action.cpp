@@ -32,7 +32,8 @@ void RlController::process_action_(const std::array<float, 6>& raw) {
     targets_[4] = 10.0 * previous_action_[4];
     targets_[5] = 10.0 * previous_action_[5];
     if (!targets_.allFinite())
-        throw std::runtime_error("V5 action or soft-limit mapping generated a non-finite target");
+        throw std::runtime_error(
+            "Policy action or soft-limit mapping generated a non-finite target");
 }
 
 void RlController::apply_soft_limits_(Eigen::Vector4d& tau) const {

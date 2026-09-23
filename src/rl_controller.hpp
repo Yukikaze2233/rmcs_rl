@@ -3,8 +3,10 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <expected>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include <eigen3/Eigen/Dense>
 #include <rclcpp/node.hpp>
@@ -23,6 +25,14 @@ inline constexpr std::array<const char*, 6> kMotorNames{"left_hip_joint",  "left
                                                         "left_wheel",      "right_wheel"};
 
 enum class State : int { kInit = 0, kIdle = 1, kPrepare = 2, kRl = 3 };
+enum class PolicyProfile { kV5Full, kFlat12486 };
+
+inline constexpr std::string_view kFlat12486Sha256 =
+    "ae58b862be5547195d8c4b3e71aa9be37b147792ebc903c68f032f341d92be6d";
+
+std::expected<PolicyProfile, std::string> parse_policy_profile(std::string_view name);
+std::expected<void, std::string> validate_model_identity(
+    std::string_view expected_sha, std::string_view actual_sha, PolicyProfile profile);
 
 bool flat_candidate_accepts(
     bool jump, double height, rmcs_msgs::ChassisMode mode,
@@ -107,7 +117,7 @@ private:
     bool policy_ready_ = false;
     bool imu_alignment_ready_ = false;
     bool auto_enter_rl_ = false;
-    bool flat_candidate_ = false;
+    PolicyProfile policy_profile_ = PolicyProfile::kV5Full;
     bool fault_latched_ = false;
     bool timing_ready_ = false;
     Eigen::Matrix3d imu_to_base_ = Eigen::Matrix3d::Identity();
