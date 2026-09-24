@@ -15,9 +15,9 @@ struct OnnxPolicy::Impl {
     Ort::SessionOptions options;
     Ort::Session session{nullptr};
     Ort::MemoryInfo memory{Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)};
-    std::array<float, 35> input{};
+    std::array<float, ObservationLayout::kSize> input{};
     std::array<float, 6> output{};
-    std::array<int64_t, 2> input_shape{1, 35};
+    std::array<int64_t, 2> input_shape{1, ObservationLayout::kSize};
     std::array<int64_t, 2> output_shape{1, 6};
     Ort::Value input_tensor{nullptr};
     Ort::Value output_tensor{nullptr};
@@ -50,7 +50,7 @@ struct OnnxPolicy::Impl {
                 throw std::runtime_error(
                     "ONNX tensor type or shape does not match the policy contract");
         };
-        check(true, 35);
+        check(true, ObservationLayout::kSize);
         check(false, 6);
 
         input_tensor = Ort::Value::CreateTensor<float>(
@@ -65,7 +65,8 @@ OnnxPolicy::OnnxPolicy(const std::string& model_path)
 
 OnnxPolicy::~OnnxPolicy() = default;
 
-std::array<float, 6> OnnxPolicy::run(const std::array<float, 35>& observation) {
+std::array<float, 6>
+    OnnxPolicy::run(const std::array<float, ObservationLayout::kSize>& observation) {
     std::copy(observation.begin(), observation.end(), impl_->input.begin());
     const char* inputs[] = {impl_->input_name.c_str()};
     const char* outputs[] = {impl_->output_name.c_str()};

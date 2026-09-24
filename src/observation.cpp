@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <span>
 
 namespace rmcs::rl {
 
@@ -91,30 +92,41 @@ bool RlController::assemble_observation_() {
     const Eigen::Vector3d gravity = q_world_base.conjugate() * -Eigen::Vector3d::UnitZ();
     const Eigen::Vector3d omega = imu_to_base_ * *gyro_;
 
-    observation_[0] = vx_reference_;
-    observation_[1] = rotating_reference ? velocity_command_->vector.y() : 0.0;
-    observation_[2] = yaw_reference_;
-    observation_[3] = height_reference_ * 5.0;
+    auto observation = std::span{observation_};
+    auto command = observation.subspan<ObservationLayout::kCommand, 3>();
+    command[0] = vx_reference_;
+    command[1] = rotating_reference ? velocity_command_->vector.y() : 0.0;
+    command[2] = yaw_reference_;
+    observation[ObservationLayout::kHeight] = height_reference_ * 5.0;
+
+    auto angular_velocity = observation.subspan<ObservationLayout::kAngularVelocity, 3>();
+    auto projected_gravity = observation.subspan<ObservationLayout::kProjectedGravity, 3>();
     for (int i = 0; i < 3; ++i) {
-        observation_[4 + i] = omega[i] * 0.5;
-        observation_[7 + i] = gravity[i];
+        angular_velocity[i] = omega[i] * 0.5;
+        projected_gravity[i] = gravity[i];
     }
+
+    auto joint_position = observation.subspan<ObservationLayout::kJointPosition, 6>();
+    std::ranges::fill(joint_position, 0.0f); // wheel positions are deliberately zero
     for (int i = 0; i < 4; ++i)
-        observation_[10 + i] = std::remainder(q_[i] - nominal_[i], 2 * std::numbers::pi);
-    observation_[14] = observation_[15] = 0.0f;     // V5 wheel angle placeholders
-    for (int i = 0; i < 6; ++i) {
-        observation_[16 + i] = dq_[i] * 0.1;
-        observation_[22 + i] = previous_action_[i]; // clipped P order, not torques
-    }
-    observation_[28] = jumping ? 0.0f : 1.0f;
-    observation_[29] = observation_[30] = observation_[31] = 0.0f;
-    observation_[32] = jumping ? 1.0f : 0.0f;
-    observation_[33] = jumping ? *jump_apex_command_ * 5.0 : 0.0f;
-    observation_[34] =
+        joint_position[i] = std::remainder(q_[i] - nominal_[i], 2 * std::numbers::pi);
+
+    auto joint_velocity = observation.subspan<ObservationLayout::kJointVelocity, 6>();
+    for (int i = 0; i < 6; ++i)
+        joint_velocity[i] = dq_[i] * 0.1;
+    auto previous_action = observation.subspan<ObservationLayout::kPreviousAction, 6>();
+    std::ranges::copy(previous_action_, previous_action.begin()); // clipped P order
+
+    auto context = observation.subspan<ObservationLayout::kContext, 7>();
+    std::ranges::fill(context, 0.0f);
+    context[ObservationLayout::kNormal] = jumping ? 0.0f : 1.0f;
+    context[ObservationLayout::kJumpRequest] = jumping ? 1.0f : 0.0f;
+    context[ObservationLayout::kJumpApex] = jumping ? *jump_apex_command_ * 5.0 : 0.0f;
+    context[ObservationLayout::kJumpElapsed] =
         jumping
             ? std::clamp(std::chrono::duration<double>(*timestamp_ - jump_start_).count(), 0.0, 5.0)
             : 0.0f;
-    for (auto& x : observation_) {
+    for (auto& x : observation) {
         if (!std::isfinite(x))
             return false;
         x = std::clamp(x, -100.0f, 100.0f);

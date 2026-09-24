@@ -27,6 +27,26 @@ inline constexpr std::array<const char*, 6> kMotorNames{"left_hip_joint",  "left
 enum class State : int { kInit = 0, kIdle = 1, kPrepare = 2, kRl = 3 };
 enum class PolicyProfile { kV5Full, kFlat12486 };
 
+// SCUT35 actor contract: each following offset is derived from the preceding block.
+// The fixed-size spans in observation.cpp make a layout change fail at compile time.
+struct ObservationLayout {
+    static constexpr std::size_t kCommand = 0;
+    static constexpr std::size_t kHeight = kCommand + 3;
+    static constexpr std::size_t kAngularVelocity = kHeight + 1;
+    static constexpr std::size_t kProjectedGravity = kAngularVelocity + 3;
+    static constexpr std::size_t kJointPosition = kProjectedGravity + 3;
+    static constexpr std::size_t kJointVelocity = kJointPosition + 6;
+    static constexpr std::size_t kPreviousAction = kJointVelocity + 6;
+    static constexpr std::size_t kContext = kPreviousAction + 6;
+    static constexpr std::size_t kSize = kContext + 7;
+
+    static constexpr std::size_t kNormal = 0;
+    static constexpr std::size_t kJumpRequest = 4;
+    static constexpr std::size_t kJumpApex = 5;
+    static constexpr std::size_t kJumpElapsed = 6;
+};
+static_assert(ObservationLayout::kSize == 35);
+
 inline constexpr std::string_view kFlat12486Sha256 =
     "ae58b862be5547195d8c4b3e71aa9be37b147792ebc903c68f032f341d92be6d";
 
@@ -44,7 +64,7 @@ public:
     ~OnnxPolicy();
     OnnxPolicy(const OnnxPolicy&) = delete;
     OnnxPolicy& operator=(const OnnxPolicy&) = delete;
-    std::array<float, 6> run(const std::array<float, 35>& observation);
+    std::array<float, 6> run(const std::array<float, ObservationLayout::kSize>& observation);
 
 private:
     struct Impl;
@@ -125,7 +145,7 @@ private:
     Vector6 q_ = Vector6::Zero();
     Vector6 dq_ = Vector6::Zero();
     Vector6 targets_ = Vector6::Zero();
-    std::array<float, 35> observation_{};
+    std::array<float, ObservationLayout::kSize> observation_{};
     std::array<float, 6> previous_action_{};
     std::size_t last_reset_count_ = 0;
     std::size_t last_policy_tick_ = 0;
